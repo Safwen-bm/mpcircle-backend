@@ -1,80 +1,72 @@
-# THINKING.md — Engineering Reflection
+# Engineering reflection
 
-## 1. What assumptions did you make?
+## Assumptions I made
 
-- "Mock authentication is acceptable" meant I didn't need a registration
-  endpoint or password reset flow — just a real bcrypt+JWT login against a
-  seeded user. I kept `User` (login identity) separate from `Student`
-  (academic record), since in most real systems staff/admin accounts and
-  student records aren't the same table.
-- The task lists specific verbs per resource (`Students` gets full CRUD,
-  `Courses` gets GET/GET:id/POST, `Assignments` gets GET/POST/PATCH). I took
-  that literally rather than adding DELETE everywhere "for completeness" —
-  adding endpoints the spec didn't ask for is scope creep, and in a real
-  team it'd mean an unreviewed, unrequested surface area.
-- `dueDate` is a required field for creating an assignment, since a due date
-  is central to what makes it an assignment rather than a task.
-- Pagination defaults to `page=1, limit=10`, capped at `limit=100`, since an
-  unbounded `limit` is an easy way to accidentally DoS your own database.
+Mock auth meant a real login flow (bcrypt + JWT against a seeded user), not
+a fake token. I didn't build registration or password reset since the task
+never asked for them.
 
-## 2. What was the hardest part?
+I kept the login identity (`User`) separate from the academic record
+(`Student`). Felt weird to merge those into one table.
 
-Deciding how much structure to add without over-engineering a screening
-task. It would have been easy to add a full RBAC system, refresh tokens, or
-a repository/service/domain layer split — but that's disproportionate to a
-4-day take-home and would make the code harder, not easier, to review. The
-actual hard part was picking the right *amount* of engineering: real
-validation and real error handling, but no premature abstraction.
+I followed the exact verb list the task gave per resource instead of adding
+DELETE everywhere for symmetry. Adding endpoints nobody asked for is just
+more surface area to review and maintain.
 
-## 3. If you had another week, what would you improve?
+Assignment status is a fixed enum instead of a text field, because a
+dashboard needs to know exactly what values it might get back.
 
-- Add integration tests that run against a real (dockerized, ephemeral)
-  Postgres instance in CI, rather than only mocking Prisma — mocks verify
-  the HTTP/validation layer well but not actual query correctness (e.g.
-  cascade deletes, unique constraint behavior).
-- Add a `GET /students/:id/assignments` convenience route, since a real
-  dashboard would hit that constantly and shouldn't have to over-fetch via
-  `/assignments?studentId=`.
-- Add refresh tokens and token revocation, since a 1-hour access token with
-  no refresh flow means users get logged out mid-session in a real product.
-- Add OpenAPI/Swagger generation from the Zod schemas so the README examples
-  can't drift from the actual API.
+## Hardest part
 
-## 4. What would you refactor first?
+Honestly, it was holding back. It's easy to go overboard on a take-home,
+adding full RBAC, refresh tokens, a repository layer on top of Prisma, all
+the "proper" stuff. But that's disproportionate for a 4-day exercise and
+mostly just adds surface area a reviewer has to read through. The hard part
+was figuring out where real engineering ends and over-engineering starts.
 
-The Zod schema shape (`z.object({ body, query, params })` on every schema
-file) is repetitive. I'd extract small factory helpers like
-`bodySchema(shape)` and `paramsIdSchema('student')` to cut the boilerplate,
-once there were enough resources to justify the abstraction. I didn't do
-this now because with only 4 resources, the "shared helper" would still be
-mostly one-off logic and add an indirection layer for not much saved code.
+## If I had another week
 
-## 5. What AI tools (if any) did you use, and how did they help?
+- Run the integration tests against an actual dockerized Postgres instead of
+  a mocked Prisma client. Mocks are good for testing the HTTP and validation
+  layer, but they won't catch real query bugs like a broken cascade delete.
+- Add a `GET /students/:id/assignments` route. A real dashboard would hit
+  that constantly instead of filtering `/assignments` every time.
+- Add refresh tokens. A 1 hour access token with no refresh means people get
+  logged out mid-session, which isn't great for a real product.
+- Generate API docs straight from the Zod schemas so the README examples
+  can't drift from what the code actually accepts.
 
-I used Claude to help scaffold the project structure and boilerplate
-(Express app wiring, Prisma schema, middleware, Docker setup) quickly, so I
-could spend my own time on the decisions that actually matter: what goes in
-each layer, what the error contract looks like, what's in vs. out of scope,
-and the write-up in this file and the product improvements doc. I reviewed
-every generated file, fixed type errors Prisma's generated types surfaced,
-and made the scope calls myself (e.g. deciding not to add DELETE to courses/
-assignments). I did not have AI write the reflection answers themselves —
-these are my own judgment calls about the trade-offs I made.
+## What I'd refactor first
 
-## 6. What did you deliberately choose not to build, and why?
+Every schema file repeats the same `z.object({ body, query, params })`
+wrapper. I'd pull that into a couple of small helpers once there were more
+resources to justify it. With only 4 resources right now, that abstraction
+would save maybe a few lines and add a layer of indirection that isn't
+worth it yet.
 
-- **Role-based access control beyond a single `role` field.** The schema
-  supports `ADMIN`/`TEACHER`/`STUDENT` and there's a `requireRole()`
-  middleware ready to use, but I didn't wire fine-grained permissions
-  (e.g. "students can only see their own assignments") into every route,
-  since the task didn't specify authorization rules and guessing wrong here
-  would be worse than leaving the primitive available but unused.
-- **DELETE on courses/assignments.** Not in the spec's endpoint list, and
-  deleting a course with existing assignments is a real product decision
-  (soft delete? cascade? block it?) that I didn't want to guess at silently.
-- **Rate limiting and request logging infrastructure** (beyond `morgan` for
-  dev). Belongs at the infrastructure/gateway layer in a real deployment,
-  discussed instead in `PRODUCT_IMPROVEMENTS.md`.
-- **A full ORM-agnostic repository layer.** Would decouple services from
-  Prisma directly, but for a 4-resource API that's speculative abstraction
-  with no second implementation in sight.
+## AI tools I used
+
+I used Claude to scaffold the project fast (Express setup, Prisma schema,
+middleware, Docker config) so I could spend my time on the decisions that
+actually matter, like what belongs in each layer, what the error format
+should look like, and what to leave out. I reviewed every file, fixed the
+type errors that came up once Prisma's client was generated, and made the
+scope calls myself, like deciding not to add DELETE to courses and
+assignments. The reflection answers here are mine, not generated.
+
+## What I chose not to build
+
+- Fine-grained permissions beyond the `role` field on `User`. The schema
+  supports ADMIN/TEACHER/STUDENT and there's a `requireRole()` middleware
+  ready to use, but I didn't wire "students can only see their own stuff"
+  into every route because the task never specified authorization rules,
+  and guessing wrong seemed worse than leaving it available but unused.
+- DELETE on courses and assignments. Wasn't in the spec, and deleting a
+  course that has assignments attached to it is a real product decision
+  (soft delete? cascade? block it?) I didn't want to silently guess at.
+- Rate limiting beyond basic request logging. That belongs at the
+  infrastructure level in a real deployment, covered instead in
+  PRODUCT_IMPROVEMENTS.md.
+- A full repository layer decoupling services from Prisma directly. With
+  only 4 resources and no second data-access implementation in sight, that
+  would be abstraction for its own sake.

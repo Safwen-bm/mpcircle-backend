@@ -1,108 +1,81 @@
 # MPCircle Student Dashboard API
 
-A REST API powering a student dashboard: authentication, students, courses, and
-assignments. Built for the MPCircle Backend Developer Intern screening task.
+REST API for a student dashboard: login, students, courses, and assignments.
+Built for the MPCircle Backend Developer Intern screening task.
 
-- **Runtime:** Node.js + Express + TypeScript
-- **Database:** PostgreSQL, accessed via Prisma
-- **Auth:** JWT (mock login against a seeded `User` table)
-- **Validation:** Zod, on every endpoint
-- **Tests:** Jest + Supertest
+- Node.js + Express + TypeScript
+- PostgreSQL with Prisma
+- JWT auth
+- Zod validation on every route
+- Jest + Supertest for testing
 
----
+## Why Prisma
 
-## 1. Decisions
+The task said an ORM wasn't required, but Prisma or Drizzle were fine if I wanted one.
+I went with Prisma because it gives me type-safe queries that match up naturally with
+TypeScript, handles migrations cleanly, and is easier to read in a review than raw SQL
+strings scattered across files. If I ever need something Prisma's query builder can't
+express well, I can still drop into `prisma.$queryRaw`.
 
-- **Prisma over raw SQL.** The task allows either. Prisma was chosen because it
-  gives type-safe queries that pair naturally with TypeScript, fast schema
-  migrations, and cleaner, more reviewable code — important at any real scale,
-  and easier for a reviewer to audit than hand-written SQL strings. Anywhere
-  Prisma's query builder would be awkward (complex reporting queries, for
-  example), raw SQL via `prisma.$queryRaw` is still available.
-- **Module-per-resource structure** (`routes → controller → service → schema`)
-  keeps each resource self-contained and mirrors how a small team would split
-  ownership as the API grows.
-- **Centralized error handling** via a single `AppError` class and one error
-  middleware, so every failure path (validation, 404, 409, 500) returns the
-  exact same `{ success, message }` shape without each controller
-  reimplementing it.
-- **JWT auth is mock-real**: it's a genuine bcrypt + JWT flow against a real
-  `User` table (not hardcoded credentials), but there's no registration
-  endpoint or refresh-token flow, since the task only asked for login.
-- **Docker Compose** runs Postgres and the API together, since local
-  Postgres installs are unnecessary friction for a screening exercise (and
-  reviewers may not have Postgres installed either).
+## How it's organized
 
-## 2. Assumptions
+Each resource (students, courses, assignments, auth) has its own folder with a
+route file, a controller, a service, and a Zod schema. Routes handle HTTP wiring,
+controllers call the service, services hold the actual logic and talk to Prisma.
+Nothing fancy, just enough separation that each piece is easy to find and test.
 
-- "Mock authentication is acceptable" was read as: real password hashing and
-  a real JWT, but no registration/password-reset flow — just a seeded demo
-  user.
-- `Student`, `Course`, and `Assignment` are the only entities that needed
-  persistence; `User` (login identity) is intentionally kept separate from
-  `Student`, since in a real system staff/admin accounts and student records
-  usually aren't the same table.
-- Assignment `status` follows a fixed enum (`PENDING`, `SUBMITTED`, `GRADED`,
-  `LATE`) rather than a free-text field, since a dashboard consuming this API
-  needs predictable values to render UI state.
-- `DELETE` was only requested for `/students`, matching the endpoint list in
-  the task; courses and assignments have no delete endpoint by design (see
-  `THINKING.md` for why).
+Errors all flow through one `AppError` class and one error-handling middleware,
+so every failure (validation, not found, conflict, server error) comes back in
+the same shape:
 
-## 3. Improvements beyond the minimum spec
+```json
+{ "success": false, "message": "Student not found" }
+```
 
-These are things a reviewer wouldn't strictly require but that meaningfully
-raise the quality bar, without over-engineering a screening task:
+## Assumptions I made
 
-- Consistent pagination (`page`, `limit`, capped at 100) and `meta` block on
-  every list endpoint, not just the ones with a "bonus: pagination" note.
-- Case-insensitive `q` search across relevant fields (name/email for
-  students, title for courses/assignments).
-- Filtering assignments by `status`, `studentId`, and `courseId` together.
-- `helmet` + `cors` on every response, and a `/health` endpoint for
-  container orchestration / uptime checks.
-- A Prisma seed script so the API is immediately usable with real (if fake)
-  data instead of an empty database.
+- "Mock authentication is acceptable" meant a real bcrypt + JWT login flow against
+  a seeded user, not a fake hardcoded token. There's no registration or password
+  reset endpoint since the task only asked for login.
+- I kept `User` (who logs in) separate from `Student` (academic record). In most
+  real systems those aren't the same table.
+- Assignment status is a fixed set of values (PENDING, SUBMITTED, GRADED, LATE)
+  rather than free text, since a dashboard needs predictable values to render.
+- The task lists specific verbs per resource. Students get full CRUD, courses get
+  GET/GET one/POST, assignments get GET/POST/PATCH. I stuck to that instead of
+  adding DELETE everywhere "just in case." More on why in THINKING.md.
 
----
+## What I added beyond the minimum
 
-## 4. Installation
+- Pagination and a `meta` block on every list endpoint, not just where it was
+  explicitly asked for.
+- Case-insensitive search (`?q=`) on students, courses, and assignments.
+- Filtering assignments by status, student, and course at the same time.
+- `helmet` and `cors` on every response, plus a `/health` endpoint.
+- A seed script so the API has real-ish data the moment you start it.
 
-You do **not** need PostgreSQL installed locally — everything runs through
-Docker.
+## Running it locally
 
-**Requirements:** Docker + Docker Compose.
+You don't need Postgres installed. Everything runs through Docker.
 
 ```bash
 git clone <your-repo-url>
 cd mpcircle-backend
-cp .env.example .env   # only needed if you plan to run `npm run dev` outside Docker
-```
-
-## 5. Running locally (Docker — recommended)
-
-```bash
 docker compose up --build
 ```
 
-This starts:
-- `db` — Postgres 16, with a healthcheck so the app waits for it to be ready
-- `app` — builds the TypeScript project, runs `prisma migrate deploy`, then
-  starts the server on **http://localhost:3000**
-
-First time only, seed some demo data (in a second terminal, while
-`docker compose up` is running):
+That builds and starts the app, waits for Postgres to be healthy, and applies
+the migrations. Once it's running, seed some demo data:
 
 ```bash
 docker compose exec app npx prisma db seed
 ```
 
-This creates a demo login:
+This gives you a login:
 
-```
-email:    admin@mpcircle.org
+email: admin@mpcircle.org
 password: password123
-```
+
 
 Check it's alive:
 
@@ -110,32 +83,32 @@ Check it's alive:
 curl http://localhost:3000/health
 ```
 
-### Running locally without Docker (optional)
+### Without Docker
 
-If you'd rather run Postgres yourself and the app directly on your machine:
+If you'd rather run your own Postgres:
 
 ```bash
 npm install
-# update DATABASE_URL in .env to point at your own Postgres instance
+cp .env.example .env   # point DATABASE_URL at your own database
 npx prisma migrate dev
 npx prisma db seed
 npm run dev
 ```
 
-## 6. Environment variables
+## Environment variables
 
-| Variable          | Description                                   | Example                                                            |
-| ------------------ | ---------------------------------------------- | -------------------------------------------------------------------- |
-| `DATABASE_URL`     | Postgres connection string                    | `postgresql://mpcircle:mpcircle@localhost:5432/mpcircle_dashboard`  |
-| `JWT_SECRET`       | Secret used to sign access tokens             | `dev_secret_change_me`                                              |
-| `JWT_EXPIRES_IN`   | Access token lifetime                         | `1h`                                                                 |
-| `PORT`             | Port the server listens on                    | `3000`                                                               |
-| `NODE_ENV`         | `development` / `test` / `production`         | `development`                                                       |
+| Variable | What it's for | Example |
+|---|---|---|
+| `DATABASE_URL` | Postgres connection string | `postgresql://mpcircle:mpcircle@localhost:5432/mpcircle_dashboard` |
+| `JWT_SECRET` | Signs the access tokens | `dev_secret_change_me` |
+| `JWT_EXPIRES_IN` | Token lifetime | `1h` |
+| `PORT` | Server port | `3000` |
+| `NODE_ENV` | development / test / production | `development` |
 
-`docker-compose.yml` already sets these for the containerized run; `.env.example`
-covers the non-Docker case.
+Docker Compose already sets these for you. `.env.example` is only needed if
+you're running outside Docker.
 
-## 7. Running tests
+## Running tests
 
 ```bash
 npm install
@@ -143,33 +116,16 @@ npx prisma generate
 npm test
 ```
 
-Tests mock the Prisma client, so they don't require a running database.
+Tests mock the Prisma client, so no database is needed to run them.
 
----
+## API examples
 
-## 8. API Reference
+Everything except `POST /auth/login` needs:
 
-All responses follow:
-
-```json
-{ "success": true, "data": ... }
-```
-
-or on error:
-
-```json
-{ "success": false, "message": "Student not found" }
-```
-
-Every endpoint except `POST /auth/login` requires:
-
-```
 Authorization: Bearer <accessToken>
-```
 
-### Auth
 
-**POST `/auth/login`**
+**Login**
 
 ```bash
 curl -X POST http://localhost:3000/auth/login \
@@ -177,46 +133,27 @@ curl -X POST http://localhost:3000/auth/login \
   -d '{"email":"admin@mpcircle.org","password":"password123"}'
 ```
 
-```json
-{
-  "success": true,
-  "message": "Login successful",
-  "data": {
-    "accessToken": "eyJhbGciOi...",
-    "user": { "id": "...", "email": "admin@mpcircle.org", "name": "Admin User", "role": "ADMIN" }
-  }
-}
-```
-
-### Students
+**Students**
 
 ```bash
-# List (paginated, searchable)
-curl "http://localhost:3000/students?page=1&limit=10&q=ada" \
-  -H "Authorization: Bearer $TOKEN"
-
-# Get one
+curl "http://localhost:3000/students?page=1&limit=10&q=ada" -H "Authorization: Bearer $TOKEN"
 curl http://localhost:3000/students/<id> -H "Authorization: Bearer $TOKEN"
 
-# Create
 curl -X POST http://localhost:3000/students \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"firstName":"Ada","lastName":"Lovelace","email":"ada@example.com"}'
 
-# Update
 curl -X PUT http://localhost:3000/students/<id> \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"lastName":"King"}'
 
-# Delete
 curl -X DELETE http://localhost:3000/students/<id> -H "Authorization: Bearer $TOKEN"
 ```
 
-### Courses
+**Courses**
 
 ```bash
 curl "http://localhost:3000/courses?q=backend" -H "Authorization: Bearer $TOKEN"
-
 curl http://localhost:3000/courses/<id> -H "Authorization: Bearer $TOKEN"
 
 curl -X POST http://localhost:3000/courses \
@@ -224,11 +161,10 @@ curl -X POST http://localhost:3000/courses \
   -d '{"title":"Intro to Backend Engineering","credits":4}'
 ```
 
-### Assignments
+**Assignments**
 
 ```bash
-curl "http://localhost:3000/assignments?status=PENDING&studentId=<id>" \
-  -H "Authorization: Bearer $TOKEN"
+curl "http://localhost:3000/assignments?status=PENDING&studentId=<id>" -H "Authorization: Bearer $TOKEN"
 
 curl -X POST http://localhost:3000/assignments \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -239,8 +175,5 @@ curl -X PATCH http://localhost:3000/assignments/<id> \
   -d '{"status":"GRADED","grade":92}'
 ```
 
----
-
-See [`THINKING.md`](./THINKING.md) for the engineering reflection and
-[`PRODUCT_IMPROVEMENTS.md`](./PRODUCT_IMPROVEMENTS.md) for the scale
-discussion.
+See `THINKING.md` for the engineering reflection and `PRODUCT_IMPROVEMENTS.md`
+for the scale discussion.
