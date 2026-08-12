@@ -9,6 +9,9 @@ Built for the MPCircle Backend Developer Intern screening task.
 - Zod validation on every route
 - Jest + Supertest for testing
 
+**Live deployment:** https://mpcircle-backend.onrender.com
+**Note:** free-tier hosting spins down after inactivity, so the first request after idle time can take 30–50 seconds to wake up.
+
 ## Why Prisma
 
 The task said an ORM wasn't required, but Prisma or Drizzle were fine if I wanted one.
